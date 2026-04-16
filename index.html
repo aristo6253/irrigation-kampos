@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Irrigation Dashboard</title>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #010409; --surface: #0d1117; --border: #21262d;
+  --text: #e6edf3; --muted: #8b949e; --dim: #6e7681;
+  --blue: #58a6ff; --green: #3fb950; --yellow: #d29922;
+  --purple: #bc8cff; --red: #f85149;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: 'SF Mono','Fira Code',Consolas,monospace; font-size: 13px; padding: 20px 24px; min-height: 100vh; }
+.header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 14px; margin-bottom: 16px; }
+.header-title { font-size: 13px; font-weight: 700; letter-spacing: 1.5px; }
+.header-sub { font-size: 10px; color: var(--muted); margin-top: 3px; }
+.live-badge { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--green); }
+.live-dot { width: 7px; height: 7px; background: var(--green); border-radius: 50%; animation: blink 2s infinite; }
+.live-dot.offline { background: var(--red); animation: none; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+/* stat cards */
+.stat-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-bottom: 10px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+.card-label { font-size: 9px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; margin-bottom: 7px; }
+.card-value { font-size: 26px; font-weight: 700; line-height: 1; }
+.card-unit { font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 1px; }
+.card-sub { font-size: 9px; color: var(--dim); margin-top: 5px; }
+.blue { color: var(--blue); } .green { color: var(--green); }
+.yellow { color: var(--yellow); } .purple { color: var(--purple); } .red { color: var(--red); }
+.muted { color: var(--muted); }
+
+/* status bar */
+.status-bar { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 13px 16px; margin-bottom: 10px; }
+.status-left { display: flex; align-items: center; gap: 10px; }
+.status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.status-state { font-size: 13px; font-weight: 700; }
+.status-detail { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.status-right { display: flex; gap: 24px; }
+.status-meta { text-align: right; }
+.status-meta-label { font-size: 9px; color: var(--dim); letter-spacing: 1px; }
+.status-meta-val { font-size: 12px; font-weight: 600; margin-top: 1px; }
+
+/* charts */
+.charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+.chart-label { font-size: 9px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; margin-bottom: 12px; }
+.chart-wrap { position: relative; height: 110px; }
+
+/* log */
+.log-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 10px; }
+.log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.log-title { font-size: 9px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; }
+.date-nav { display: flex; align-items: center; gap: 8px; font-size: 10px; }
+.date-nav span { color: var(--text); min-width: 120px; text-align: center; }
+.date-btn { background: #161b22; border: 1px solid #30363d; border-radius: 4px; padding: 2px 10px; color: var(--muted); cursor: pointer; font-size: 11px; font-family: inherit; }
+.date-btn:hover { color: var(--text); border-color: var(--blue); }
+.log-empty { color: var(--dim); font-size: 11px; padding: 8px 0; }
+.log-row { display: grid; grid-template-columns: 58px 1fr auto; gap: 10px; align-items: baseline; padding: 5px 0; border-bottom: 1px solid #161b22; font-size: 11px; }
+.log-row:last-child { border-bottom: none; }
+.log-time { color: var(--dim); font-size: 10px; }
+.log-text { color: var(--text); }
+.badge { font-size: 9px; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+.bw { background: rgba(88,166,255,.15); color: var(--blue); }
+.bs { background: rgba(210,153,34,.15); color: var(--yellow); }
+.bc { background: rgba(63,185,80,.15); color: var(--green); }
+.br { background: rgba(248,81,73,.15); color: var(--red); }
+.bp { background: rgba(188,140,255,.15); color: var(--purple); }
+.bd { color: var(--dim); }
+
+/* settings */
+.settings-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+.settings-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-top: 10px; }
+.setting-key { font-size: 9px; color: var(--dim); letter-spacing: 1px; margin-bottom: 2px; }
+.setting-val { font-size: 12px; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="header-title">IRRIGATION SYSTEM</div>
+    <div class="header-sub" id="hdr-sub">Connecting…</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:16px">
+    <div id="ntfy-badge" style="font-size:10px;color:var(--dim)"></div>
+    <button id="test-alert-btn" class="date-btn" onclick="fireTestAlert()" style="display:none">🔔 test</button>
+    <div class="live-badge">
+      <div class="live-dot" id="live-dot"></div>
+      <span id="live-label">CONNECTING</span>
+    </div>
+  </div>
+</div>
+
+<!-- Section 1: Metric cards -->
+<div class="stat-grid">
+  <div class="card">
+    <div class="card-label">Battery Voltage</div>
+    <div class="card-value blue" id="v-batt">—<span class="card-unit">V</span></div>
+    <div class="card-sub" id="v-batt-sub">&nbsp;</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Volume Today</div>
+    <div class="card-value green" id="v-vol">—<span class="card-unit">L</span></div>
+    <div class="card-sub" id="v-vol-sub">&nbsp;</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Active Valves</div>
+    <div class="card-value purple" id="v-vlv">—</div>
+    <div class="card-sub" id="v-vlv-sub">&nbsp;</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Operation Mode</div>
+    <div class="card-value yellow" id="v-mode" style="font-size:16px;padding-top:5px">—</div>
+    <div class="card-sub" id="v-mode-sub">&nbsp;</div>
+  </div>
+</div>
+
+<!-- Section 2: Status bar -->
+<div class="status-bar">
+  <div class="status-left">
+    <div class="status-dot" id="st-dot" style="background:var(--muted)"></div>
+    <div>
+      <div class="status-state" id="st-state">—</div>
+      <div class="status-detail" id="st-detail">&nbsp;</div>
+    </div>
+  </div>
+  <div class="status-right">
+    <div class="status-meta">
+      <div class="status-meta-label">WAKE IN</div>
+      <div class="status-meta-val blue" id="st-wake">—</div>
+    </div>
+    <div class="status-meta">
+      <div class="status-meta-label">PAUSE LEFT</div>
+      <div class="status-meta-val yellow" id="st-pause">—</div>
+    </div>
+    <div class="status-meta">
+      <div class="status-meta-label">LAST SIGNAL</div>
+      <div class="status-meta-val" id="st-signal">—</div>
+    </div>
+    <div class="status-meta">
+      <div class="status-meta-label">CHARGING</div>
+      <div class="status-meta-val" id="st-charge">—</div>
+    </div>
+  </div>
+</div>
+
+<!-- Section 3: Charts -->
+<div class="charts-grid">
+  <div class="chart-card">
+    <div class="chart-label">Battery Voltage — 7 days (avg V)</div>
+    <div class="chart-wrap"><canvas id="chart-batt"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-label">Water Volume — 7 days (L/day)</div>
+    <div class="chart-wrap"><canvas id="chart-vol"></canvas></div>
+  </div>
+</div>
+
+<!-- Section 4: Event log -->
+<div class="log-card">
+  <div class="log-header">
+    <div class="log-title">Event Log</div>
+    <div class="date-nav">
+      <button class="date-btn" onclick="shiftLog(-1)">← prev</button>
+      <span id="log-date-label">—</span>
+      <button class="date-btn" onclick="shiftLog(1)">next →</button>
+    </div>
+  </div>
+  <div id="log-body"><div class="log-empty">Loading…</div></div>
+</div>
+
+<!-- Section 5: Settings -->
+<div class="settings-card">
+  <div class="log-title">Active Settings</div>
+  <div class="settings-grid" id="settings-grid">
+    <div class="setting-key">Loading…</div>
+  </div>
+</div>
+
+<script>
+// ── CONFIG ──────────────────────────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey:      "AIzaSyDNMR6boFMKSyK9SzTO0szh-JMTL-OEZyE",
+  authDomain:  "waterflowcontrol-73ec9.firebaseapp.com",
+  databaseURL: "https://waterflowcontrol-73ec9-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId:   "waterflowcontrol-73ec9",
+};
+
+// ── NTFY ALERTS ──────────────────────────────────────────────────────────────
+// 1. Install the ntfy app (ntfy.sh) on your phone
+// 2. Subscribe to your topic in the app
+// 3. Set your topic name below (make it unique — anyone who knows it can subscribe)
+const NTFY_TOPIC   = 'irrigation-kampos-86760';   // ← change this
+const NTFY_ENABLED = NTFY_TOPIC !== 'your-irrigation-topic';
+
+const seenAlerts = new Set();  // prevents duplicate notifications
+
+function sendAlert(title, body, priority = 'default') {
+  if (!NTFY_ENABLED) return;
+  // Headers must be ISO-8859-1 — strip emoji from title, put them in body
+  const safeTitle = title.replace(/[^\x00-\xFF]/g, '').trim();
+  fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
+    method: 'POST',
+    headers: {
+      'Title':    safeTitle,
+      'Priority': priority,
+      'Tags':     'seedling',
+    },
+    body,
+  }).catch(() => {});
+}
+
+function fireTestAlert() {
+  const btn = document.getElementById('test-alert-btn');
+  btn.textContent = '⏳ sending…';
+  btn.disabled = true;
+  fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
+    method: 'POST',
+    headers: { 'Title': 'Test Alert', 'Priority': 'default', 'Tags': 'white_check_mark,seedling' },
+    body: 'Irrigation dashboard alerts are working!',
+  }).then(r => {
+    btn.textContent = r.ok ? '✅ sent!' : '❌ failed';
+    setTimeout(() => { btn.textContent = '🔔 test'; btn.disabled = false; }, 2000);
+  }).catch(e => {
+    console.error('ntfy fetch failed:', e);
+    btn.textContent = '❌ error';
+    setTimeout(() => { btn.textContent = '🔔 test'; btn.disabled = false; }, 2000);
+  });
+}
+
+function checkAlerts(data) {
+  if (!data) return;
+
+  // Faulty valve
+  if (data.FaultyValve) {
+    Object.entries(data.FaultyValve).forEach(([t, valve]) => {
+      const key = `faulty-${t}`;
+      if (!seenAlerts.has(key)) {
+        seenAlerts.add(key);
+        sendAlert('⚠️ Faulty Valve', `Valve ${valve} reported faulty at ${fmtTime(t)}`, 'urgent');
+      }
+    });
+  }
+
+  // No flow detected
+  if (data['Checked-NoFlow']) {
+    Object.entries(data['Checked-NoFlow']).forEach(([t, valve]) => {
+      const key = `noflow-${t}`;
+      if (!seenAlerts.has(key)) {
+        seenAlerts.add(key);
+        sendAlert('⚠️ No Flow', `No flow on valve ${valve} at ${fmtTime(t)}`, 'high');
+      }
+    });
+  }
+
+  // Irrigation started
+  if (data.WaterOn) {
+    Object.keys(data.WaterOn).forEach(t => {
+      const key = `wateron-${t}`;
+      if (!seenAlerts.has(key)) {
+        seenAlerts.add(key);
+        sendAlert('💧 Irrigation Started', `Watering began at ${fmtTime(t)}`);
+      }
+    });
+  }
+
+  // Irrigation complete
+  if (data.Irrigation && data.Irrigation.Complete) {
+    Object.entries(data.Irrigation.Complete).forEach(([t, vol]) => {
+      const key = `complete-${t}`;
+      if (!seenAlerts.has(key)) {
+        seenAlerts.add(key);
+        sendAlert('✅ Irrigation Complete', `Finished at ${fmtTime(t)} — ${vol} L delivered`);
+      }
+    });
+  }
+
+  // Low battery
+  if (data.batteryvoltage) {
+    Object.entries(data.batteryvoltage).forEach(([t, v]) => {
+      const key = `lowbatt-${t}`;
+      if (+v < 11 && !seenAlerts.has(key)) {
+        seenAlerts.add(key);
+        sendAlert('🔋 Low Battery', `Voltage at ${fmtTime(t)}: ${v} V`, 'high');
+      }
+    });
+  }
+
+  // Very long sleep (>24 h)
+  if (data.WentToSleep) {
+    Object.entries(data.WentToSleep).forEach(([t, sv]) => {
+      const key = `longsleep-${t}`;
+      if (sv && sv.toWakeUpInMins > 1440 && !seenAlerts.has(key)) {
+        seenAlerts.add(key);
+        const hrs = Math.round(sv.toWakeUpInMins / 60);
+        sendAlert('😴 Long Sleep', `Device sleeping for ~${hrs} h (pause: ${Math.round(sv.wateringPauseForMins/60)} h)`, 'low');
+      }
+    });
+  }
+}
+
+// ── STATE ────────────────────────────────────────────────────────────────────
+let settings   = {};
+let todayData  = {};
+let logDate    = new Date();
+let battChart, volChart;
+let lastSeen   = { batt: null, status: null, lifeSignal: null, charging: null };
+
+// ── HELPERS ──────────────────────────────────────────────────────────────────
+function dateToPath(d) {
+  return `/${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+}
+
+function fmtDate(d) {
+  return d.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short', year:'numeric' });
+}
+
+function fmtTime(t) {
+  // Firebase keys use HH-MM-SS- (dashes, optional trailing dash)
+  return String(t).replace(/-$/, '').replace(/-/g, ':');
+}
+
+function flattenEvents(data) {
+  if (!data) return [];
+  const ev = [];
+
+  const addKeyed = (obj, type) => {
+    if (!obj || typeof obj !== 'object') return;
+    Object.entries(obj).forEach(([t,v]) => ev.push({ time: t, type, value: v }));
+  };
+
+  addKeyed(data.WaterOn,           'WaterOn');
+  addKeyed(data.WaterOff,          'WaterOff');
+  addKeyed(data.LifeSignal,        'LifeSignal');
+  addKeyed(data.Snoozed,           'Snoozed');
+  addKeyed(data['Checked-NoFlow'], 'Checked-NoFlow');
+  addKeyed(data.FaultyValve,       'FaultyValve');
+  addKeyed(data.batteryvoltage,    'batteryvoltage');
+  addKeyed(data.WentToSleep,       'WentToSleep');
+  addKeyed(data.SettingUpdated,    'SettingUpdated');
+
+  if (data.Irrigation) {
+    Object.entries(data.Irrigation).forEach(([k,v]) => {
+      if (v && typeof v === 'object')
+        Object.entries(v).forEach(([t,val]) => ev.push({ time: t, type: `Irr/${k}`, value: val }));
+      else if (typeof v === 'string')
+        ev.push({ time: v, type: `Irr/${k}`, value: v });
+    });
+  }
+
+  if (data.Charging) {
+    if (data.Charging.ON)  ev.push({ time: data.Charging.ON,  type: 'Charging/ON',  value: data.Charging.ON });
+    if (data.Charging.off) ev.push({ time: data.Charging.off, type: 'Charging/off', value: data.Charging.off });
+  }
+  if (data.Charging_OFF) {
+    const t = String(data.Charging_OFF).replace('-','');
+    ev.push({ time: t, type: 'Charging_OFF', value: data.Charging_OFF });
+  }
+
+  return ev.sort((a,b) => String(a.time).localeCompare(String(b.time)));
+}
+
+function describeEvent({ type, value }) {
+  if (type === 'WaterOn')        return 'Watering ON';
+  if (type === 'WaterOff')       return 'Watering OFF';
+  if (type === 'LifeSignal')     return 'Life signal';
+  if (type === 'Snoozed')        return 'Snoozed';
+  if (type === 'batteryvoltage') return `Battery: ${value} V`;
+  if (type === 'Checked-NoFlow') return `No flow — valve ${value}`;
+  if (type === 'FaultyValve')    return `Faulty valve: ${value}`;
+  if (type === 'Charging/ON')    return 'Charging started';
+  if (type === 'Charging/off')   return 'Charging ended';
+  if (type === 'Charging_OFF')   return 'Charging aborted';
+  if (type === 'WentToSleep') {
+    if (typeof value === 'object')
+      return `Went to sleep — wake in ${value.toWakeUpInMins} min, pause ${value.wateringPauseForMins} min${value.Pressure ? ' · pressure ON' : ''}`;
+    return 'Went to sleep';
+  }
+  if (type === 'SettingUpdated') {
+    if (typeof value === 'object') {
+      const m = value.mode ? 'INTERVAL' : 'PRESSURE';
+      return `Settings updated — mode=${m}, vol=${value.VOLUME_THRESHOLD}L`;
+    }
+    return 'Settings updated';
+  }
+  if (type.startsWith('Irr/')) {
+    const s = type.slice(4);
+    if (s.startsWith('Complete'))        return `Irrigation complete — ${value} L`;
+    if (s.startsWith('FlowStopped'))     return `Flow stopped — ${value} L`;
+    if (s.startsWith('Started-Vlv-'))    return `Started valve ${s.slice(11)} — ${value} L`;
+    if (s.startsWith('SwitchedToValve-'))return `Switched to valve ${s.slice(16)} — ${value} L`;
+    if (s.startsWith('Elapsed-Mins-'))   return `${s.slice(13)} min elapsed — ${value} L`;
+    if (s.startsWith('Timer_ON_valve-')) return `Timer ON valve ${s.slice(14)}`;
+    if (s.startsWith('switchedToValve-'))return `Timer → valve ${s.slice(16)}`;
+    if (s === 'timeEnded')               return 'Timer watering ended';
+    return `Irrigation: ${s} — ${value}`;
+  }
+  return `${type}: ${JSON.stringify(value)}`;
+}
+
+function badgeOf(type) {
+  if (['WaterOn','WaterOff'].includes(type) || type.startsWith('Irr/')) return 'bw';
+  if (type === 'WentToSleep')                                            return 'bs';
+  if (type.startsWith('Charging'))                                       return 'bc';
+  if (['FaultyValve','Checked-NoFlow'].includes(type))                   return 'br';
+  if (type === 'SettingUpdated')                                         return 'bp';
+  return 'bd';
+}
+
+function inferStatus(data) {
+  const evs = flattenEvents(data).filter(e =>
+    ['WaterOn','WaterOff','WentToSleep','Charging/ON','Charging/off'].includes(e.type));
+  if (!evs.length) return { state:'UNKNOWN', color:'var(--muted)' };
+  const last = evs[evs.length - 1];
+  if (last.type === 'WaterOn')    return { state:'WATERING',  color:'var(--blue)' };
+  if (last.type === 'Charging/ON')return { state:'CHARGING',  color:'var(--green)' };
+  if (last.type === 'WentToSleep')return { state:'SLEEPING',  color:'var(--yellow)', sleep: last };
+  return { state:'IDLE', color:'var(--muted)' };
+}
+
+function latestBatt(data) {
+  if (!data || !data.batteryvoltage) return null;
+  const vals = Object.entries(data.batteryvoltage)
+    .sort((a,b) => String(a[0]).localeCompare(String(b[0])));
+  return vals.length ? +vals[vals.length-1][1] : null;
+}
+
+function dailyVolume(data) {
+  if (!data || !data.Irrigation) return 0;
+  const src = data.Irrigation.Complete || data.Irrigation.FlowStopped;
+  if (!src || typeof src !== 'object') return 0;
+  const vals = Object.values(src).map(Number).filter(n => !isNaN(n));
+  return vals.length ? Math.max(...vals) : 0;
+}
+
+function avgBatt(data) {
+  if (!data || !data.batteryvoltage) return null;
+  const vals = Object.values(data.batteryvoltage).map(Number).filter(n => !isNaN(n));
+  return vals.length ? +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2) : null;
+}
+
+function shortDate(d) {
+  return d.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+}
+
+function staleSuffix(dateLabel, time) {
+  return `Last: ${dateLabel} · ${fmtTime(time)}`;
+}
+
+function extractLastSeen(history) {
+  // history is [{date, data}] newest-last — scan newest-first
+  lastSeen = { batt: null, status: null, lifeSignal: null, charging: null };
+  for (let i = history.length - 1; i >= 0; i--) {
+    const { date, data } = history[i];
+    if (!data) continue;
+    const dl = shortDate(date);
+
+    if (!lastSeen.batt && data.batteryvoltage) {
+      const entries = Object.entries(data.batteryvoltage)
+        .sort((a,b) => String(a[0]).localeCompare(String(b[0])));
+      if (entries.length) {
+        const [t, v] = entries[entries.length - 1];
+        lastSeen.batt = { value: +v, time: t, dateLabel: dl };
+      }
+    }
+
+    if (!lastSeen.status) {
+      const s = inferStatus(data);
+      if (s.state !== 'UNKNOWN') lastSeen.status = { ...s, dateLabel: dl };
+    }
+
+    if (!lastSeen.lifeSignal && data.LifeSignal) {
+      const times = Object.keys(data.LifeSignal).sort();
+      if (times.length)
+        lastSeen.lifeSignal = { time: times[times.length - 1], dateLabel: dl };
+    }
+
+    if (!lastSeen.charging && data.Charging)
+      lastSeen.charging = { ...data.Charging, dateLabel: dl };
+  }
+}
+
+// ── RENDER: CARDS ────────────────────────────────────────────────────────────
+function renderCards() {
+  // Battery
+  const bv     = latestBatt(todayData);
+  const stBatt = bv == null && lastSeen.batt;
+  const dBv    = bv ?? lastSeen.batt?.value;
+  const battClass = dBv == null ? 'blue' : dBv >= 12 ? 'green' : dBv >= 11 ? 'yellow' : 'red';
+  document.getElementById('v-batt').className = `card-value ${stBatt ? 'muted' : battClass}`;
+  document.getElementById('v-batt').innerHTML =
+    dBv != null ? `${dBv}<span class="card-unit">V</span>` : `—<span class="card-unit">V</span>`;
+  document.getElementById('v-batt-sub').textContent = stBatt
+    ? staleSuffix(lastSeen.batt.dateLabel, lastSeen.batt.time)
+    : (dBv >= 12.5 ? 'Fully charged' : dBv >= 11 ? 'Good' : dBv != null ? 'Low battery' : '');
+
+  // Volume
+  const vol = dailyVolume(todayData);
+  const thr = settings.VOLUME_THRESHOLD || 0;
+  document.getElementById('v-vol').innerHTML = `${vol.toFixed(1)}<span class="card-unit">L</span>`;
+  document.getElementById('v-vol-sub').textContent =
+    thr ? `Target ${thr} L · ${Math.round(vol/thr*100)}%` : '';
+
+  // Valves
+  const n = settings.NUM_OUTPUTS || 0;
+  document.getElementById('v-vlv').textContent = n || '—';
+  document.getElementById('v-vlv-sub').textContent =
+    n ? Array.from({length:n},(_,i)=>`Vlv-${i+1}`).join(' · ') : '';
+
+  // Mode
+  const mode = settings.mode;
+  document.getElementById('v-mode').textContent =
+    mode == null ? '—' : mode ? 'INTERVAL' : 'PRESSURE';
+  document.getElementById('v-mode-sub').textContent =
+    mode == null ? '' : (!mode && settings.sub_mode_timed ? 'sub: timed' :
+                          !mode ? 'sub: sensor' : `every ${settings.waterIntervalDays||1}d`);
+}
+
+// ── RENDER: STATUS BAR ───────────────────────────────────────────────────────
+function renderStatus() {
+  const todayStatus = inferStatus(todayData);
+  const stale = todayStatus.state === 'UNKNOWN' && lastSeen.status;
+  const s = stale ? lastSeen.status : todayStatus;
+
+  const staleColor = 'var(--muted)';
+  document.getElementById('st-dot').style.background = stale ? staleColor : s.color;
+  document.getElementById('st-state').style.color    = stale ? staleColor : s.color;
+  document.getElementById('st-state').textContent    = s.state + (stale ? ` (${s.dateLabel})` : '');
+
+  let detail = '', wakeStr = '—', pauseStr = '—';
+  if (s.state === 'SLEEPING' && s.sleep) {
+    const sv = s.sleep.value;
+    if (typeof sv === 'object') {
+      wakeStr  = sv.toWakeUpInMins      != null ? `${sv.toWakeUpInMins} min`      : '—';
+      pauseStr = sv.wateringPauseForMins != null ? `${sv.wateringPauseForMins} min` : '—';
+      detail   = `Slept at ${fmtTime(s.sleep.time)}${stale ? ' · ' + s.dateLabel : ''}${sv.Pressure ? ' · pressure ON' : ''}`;
+    }
+  } else if (s.state === 'WATERING') {
+    detail = stale ? `Last seen watering · ${s.dateLabel}` : 'Valves open · flow active';
+  } else if (s.state === 'CHARGING') {
+    detail = stale ? `Last seen charging · ${s.dateLabel}` : 'Solar charging in progress';
+  }
+  document.getElementById('st-detail').textContent = detail;
+
+  const wakeEl  = document.getElementById('st-wake');
+  const pauseEl = document.getElementById('st-pause');
+  wakeEl.textContent  = wakeStr;
+  pauseEl.textContent = pauseStr;
+  wakeEl.className    = `status-meta-val ${stale ? 'muted' : 'blue'}`;
+  pauseEl.className   = `status-meta-val ${stale ? 'muted' : 'yellow'}`;
+
+  // Last life signal — fall back to lastSeen
+  const ls = todayData && todayData.LifeSignal;
+  const sigEl = document.getElementById('st-signal');
+  if (ls && typeof ls === 'object') {
+    const times = Object.keys(ls).sort();
+    sigEl.textContent = fmtTime(times[times.length - 1]) || '—';
+    sigEl.className   = 'status-meta-val';
+  } else if (lastSeen.lifeSignal) {
+    sigEl.textContent = `${fmtTime(lastSeen.lifeSignal.time)} · ${lastSeen.lifeSignal.dateLabel}`;
+    sigEl.className   = 'status-meta-val muted';
+  } else {
+    sigEl.textContent = '—';
+    sigEl.className   = 'status-meta-val';
+  }
+
+  // Charging — fall back to lastSeen
+  const ch = todayData && todayData.Charging;
+  const chEl = document.getElementById('st-charge');
+  if (ch) {
+    chEl.textContent = ch.off ? `Done ${ch.off}` : ch.ON ? `ON ${ch.ON}` : '—';
+    chEl.className   = `status-meta-val ${ch.off ? 'green' : ch.ON ? 'yellow' : ''}`;
+  } else if (lastSeen.charging) {
+    const lc = lastSeen.charging;
+    chEl.textContent = `${lc.off ? 'Done' : lc.ON ? 'ON' : '—'} · ${lc.dateLabel}`;
+    chEl.className   = 'status-meta-val muted';
+  } else {
+    chEl.textContent = '—';
+    chEl.className   = 'status-meta-val';
+  }
+}
+
+// ── RENDER: CHARTS ───────────────────────────────────────────────────────────
+const chartDefaults = {
+  responsive: true, maintainAspectRatio: false,
+  plugins: { legend: { display: false }, tooltip: { callbacks: {
+    title: i => i[0].label,
+    label: i => ` ${i.raw != null ? i.raw : 'no data'}`
+  }}},
+  scales: {
+    x: { grid: { color:'#21262d' }, ticks: { color:'#8b949e', font:{ size:9 }}},
+    y: { grid: { color:'#21262d' }, ticks: { color:'#8b949e', font:{ size:9 }}}
+  }
+};
+
+function renderCharts(history) {
+  const labels   = history.map(h => `${h.date.getDate()}/${h.date.getMonth()+1}`);
+  const battVals = history.map(h => avgBatt(h.data));
+  const volVals  = history.map(h => dailyVolume(h.data));
+
+  const battColors = battVals.map((v,i) => {
+    if (i === battVals.length - 1) return '#58a6ff';
+    return v == null ? '#21262d' : v >= 12 ? '#3fb950' : v >= 11 ? '#d29922' : '#f85149';
+  });
+
+  if (battChart) battChart.destroy();
+  battChart = new Chart(document.getElementById('chart-batt'), {
+    type: 'bar',
+    data: { labels, datasets: [{ data: battVals, backgroundColor: battColors, borderRadius: 3, borderSkipped: false }] },
+    options: { ...chartDefaults, plugins: { ...chartDefaults.plugins, tooltip: { callbacks: {
+      title: i => `${i[0].label}`,
+      label: i => i.raw != null ? ` ${i.raw} V` : ' no data'
+    }}}},
+  });
+
+  if (volChart) volChart.destroy();
+  volChart = new Chart(document.getElementById('chart-vol'), {
+    type: 'bar',
+    data: { labels, datasets: [{ data: volVals, backgroundColor: volVals.map((_,i) =>
+      i === volVals.length-1 ? '#3fb950' : 'rgba(63,185,80,.55)'), borderRadius: 3, borderSkipped: false }] },
+    options: { ...chartDefaults, plugins: { ...chartDefaults.plugins, tooltip: { callbacks: {
+      title: i => `${i[0].label}`,
+      label: i => ` ${i.raw.toFixed(1)} L`
+    }}}},
+  });
+
+  // Click bar → navigate log to that day
+  [battChart, volChart].forEach(chart => {
+    document.getElementById(chart.canvas.id).onclick = e => {
+      const pts = chart.getElementsAtEventForMode(e,'nearest',{intersect:true},false);
+      if (pts.length) {
+        const d = new Date(history[pts[0].index].date);
+        logDate = d;
+        fetchAndRenderLog(d);
+      }
+    };
+  });
+}
+
+// ── RENDER: LOG ──────────────────────────────────────────────────────────────
+function renderLog(data, date) {
+  document.getElementById('log-date-label').textContent = fmtDate(date || logDate);
+  const evs = flattenEvents(data).filter(e => e.type !== 'batteryvoltage');
+  const body = document.getElementById('log-body');
+  if (!evs.length) { body.innerHTML = '<div class="log-empty">No events for this day.</div>'; return; }
+  body.innerHTML = evs.map(e => `
+    <div class="log-row">
+      <span class="log-time">${fmtTime(e.time)}</span>
+      <span class="log-text">${describeEvent(e)}</span>
+      <span class="badge ${badgeOf(e.type)}">${e.type.split('/')[0].toLowerCase()}</span>
+    </div>`).join('');
+}
+
+// ── RENDER: SETTINGS ────────────────────────────────────────────────────────
+function renderSettings() {
+  if (!settings || !Object.keys(settings).length) return;
+  const s = settings;
+  const rows = [
+    ['MODE',            s.mode ? 'INTERVAL' : 'PRESSURE',                     s.mode ? 'yellow' : 'yellow'],
+    ['VOLUME TARGET',   s.VOLUME_THRESHOLD != null ? `${s.VOLUME_THRESHOLD} L` : '—', 'green'],
+    ['VALVES',          s.NUM_OUTPUTS      != null ? `${s.NUM_OUTPUTS}`         : '—', ''],
+    ['RESUME HOUR',     s.morningResumeTime!= null ? `${s.morningResumeTime}:00`: '—', ''],
+    ['PAUSE HOUR',      s.eveningPauseTime != null ? `${s.eveningPauseTime}:00` : '—', ''],
+    ['INTERVAL DAYS',   s.waterIntervalDays!= null ? `${s.waterIntervalDays}d`  : '—', ''],
+    ['CHARGING',        s.includeCharging  ? 'ENABLED' : 'DISABLED',           s.includeCharging ? 'green' : 'red'],
+    ['SUB MODE TIMED',  s.sub_mode_timed   ? 'YES' : 'NO',                     ''],
+    ['UPDATE PENDING',  s.updateSettings   ? 'YES' : 'no',                     s.updateSettings ? 'yellow' : 'dim'],
+  ];
+  document.getElementById('settings-grid').innerHTML = rows.map(([k,v,c]) =>
+    `<div><div class="setting-key">${k}</div><div class="setting-val ${c}">${v}</div></div>`
+  ).join('');
+}
+
+// ── NAVIGATION ───────────────────────────────────────────────────────────────
+function shiftLog(delta) {
+  logDate = new Date(logDate.getTime() + delta * 86400000);
+  fetchAndRenderLog(logDate);
+}
+
+function fetchAndRenderLog(date) {
+  document.getElementById('log-body').innerHTML = '<div class="log-empty">Loading…</div>';
+  firebase.database().ref(dateToPath(date)).get().then(snap => {
+    renderLog(snap.val() || {}, date);
+  });
+}
+
+// ── HISTORY LOAD ─────────────────────────────────────────────────────────────
+function loadHistory() {
+  const days = Array.from({length:7}, (_,i) => {
+    const d = new Date(); d.setDate(d.getDate() - (6-i)); return d;
+  });
+  Promise.all(days.map(d => firebase.database().ref(dateToPath(d)).get()))
+    .then(snaps => {
+      const history = snaps.map((s,i) => ({ date: days[i], data: s.val() || {} }));
+      renderCharts(history);
+      extractLastSeen(history);
+      renderCards();
+      renderStatus();
+    });
+}
+
+// ── INIT ─────────────────────────────────────────────────────────────────────
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// Header: show today's date
+document.getElementById('hdr-sub').textContent =
+  `${fmtDate(new Date())} · ${firebaseConfig.projectId}`;
+document.getElementById('ntfy-badge').textContent =
+  NTFY_ENABLED ? `🔔 ntfy: ${NTFY_TOPIC}` : '🔕 alerts off';
+if (NTFY_ENABLED)
+  document.getElementById('test-alert-btn').style.display = 'inline-block';
+
+// Real-time listener: Settings → cards + settings panel
+db.ref('/Settings').on('value', snap => {
+  settings = snap.val() || {};
+  renderCards();
+  renderSettings();
+}, err => console.error('Settings error', err));
+
+// Real-time listener: today's events → cards + status + log
+db.ref(dateToPath(new Date())).on('value', snap => {
+  todayData = snap.val() || {};
+  renderCards();
+  renderStatus();
+  renderLog(todayData, new Date());
+  checkAlerts(todayData);
+
+  // Update live indicator
+  document.getElementById('live-dot').className   = 'live-dot';
+  document.getElementById('live-label').textContent = `LIVE · ${new Date().toLocaleTimeString()}`;
+}, err => {
+  document.getElementById('live-dot').className   = 'live-dot offline';
+  document.getElementById('live-label').textContent = 'OFFLINE';
+});
+
+// Load 7-day history for charts
+loadHistory();
+
+</script>
+</body>
+</html>
