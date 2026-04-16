@@ -121,12 +121,74 @@ State is preserved across deep-sleep cycles using ESP32 RTC memory (`RTCData` st
 
 ---
 
+## Push Notifications
+
+Server-side push notifications are delivered via [ntfy.sh](https://ntfy.sh) using Firebase Cloud Functions (Node.js, `europe-west1`). Notifications fire automatically when the device writes to Firebase — no dashboard open required.
+
+| Event | Priority | Condition |
+|---|---|---|
+| Faulty valve detected | Urgent | Any write to `/{date}/FaultyValve/` |
+| No flow detected | High | Any write to `/{date}/Checked-NoFlow/` |
+| Irrigation started | Default | Any write to `/{date}/WaterOn/` |
+| Irrigation complete | Default | Any write to `/{date}/Irrigation/Complete/` |
+| Low battery | High | Battery voltage < 11 V |
+| Long sleep | Low | Sleep duration > 24 h |
+
+Notifications are sent to the topic `irrigation-kampos-86760` on `ntfy.sh`. Install the [ntfy app](https://ntfy.sh) on your phone and subscribe to that topic to receive them.
+
+### How it works
+
+```
+ESP32 firmware
+     │  writes event to Firebase RTDB
+     ▼
+Firebase Realtime Database (europe-west1)
+     │  new node created → triggers Cloud Function
+     ▼
+Firebase Cloud Function (functions/index.js)
+     │  evaluates condition (e.g. voltage < 11 V)
+     │  sends HTTP POST to ntfy.sh
+     ▼
+ntfy.sh server
+     │  pushes notification
+     ▼
+ntfy app on your phone
+```
+
+The Cloud Functions run entirely on Google's servers, so notifications are delivered 24/7 regardless of whether the dashboard is open or your Mac is on.
+
+Firebase and ntfy.sh have no built-in connection — the Cloud Function simply makes a standard HTTP request to ntfy.sh, the same way a browser loads a webpage. ntfy.sh receives it and forwards it to any subscribed phone. This means ntfy could be swapped for any other notification service (Pushover, Telegram, email, etc.) by changing only the HTTP call in `functions/index.js` — Firebase doesn't care where the message goes.
+
+### Dashboard fallback
+
+When the dashboard is open in a browser, `index.html` also monitors Firebase directly and can send the same ntfy notifications via `fetch()`. This is a secondary path — the Cloud Functions are the primary, always-on delivery mechanism.
+
+### Changing the ntfy topic
+
+The topic is defined in two places — keep them in sync:
+
+| File | Line | Variable |
+|---|---|---|
+| `functions/index.js` | line 5 | `const NTFY_TOPIC = "..."` |
+| `index.html` | ~line 198 | `const NTFY_TOPIC = "..."` |
+
+After changing `functions/index.js`, redeploy with `firebase deploy --only functions`.
+
+---
+
 ## Project Structure
 
 ```
 Irrigation System/
-├── system.c    # Main firmware (~1100 lines)
-├── .env        # Firebase API key (not committed)
+├── system.c            # Main firmware (~1100 lines)
+├── secrets.h           # WiFi & Firebase credentials (not committed)
+├── secrets.h.example   # Template for secrets.h
+├── index.html          # Monitoring dashboard (single-file, no build step)
+├── functions/
+│   ├── index.js        # Firebase Cloud Functions (push notifications)
+│   └── package.json
+├── firebase.json       # Firebase project config
+├── .firebaserc         # Firebase project alias
 └── README.md
 ```
 
@@ -134,5 +196,5 @@ Irrigation System/
 
 ## Security Notes
 
-- WiFi credentials and the Firebase API key are currently hardcoded. Move them to environment variables or a secrets manager before sharing or deploying.
-- The `.env` file should be added to `.gitignore`.
+- WiFi credentials and the Firebase API key are stored in `secrets.h` (gitignored). Copy `secrets.h.example` to `secrets.h` and fill in your values before flashing.
+- The Firebase API key is visible in `index.html` — this is expected for client-side Firebase apps. Restrict access using Firebase security rules.
