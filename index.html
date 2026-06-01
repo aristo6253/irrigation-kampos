@@ -7,6 +7,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💧</text></svg>">
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 :root {
@@ -733,31 +734,38 @@ document.getElementById('ntfy-badge').textContent =
 if (NTFY_ENABLED)
   document.getElementById('test-alert-btn').style.display = 'inline-block';
 
-// Real-time listener: Settings → cards + settings panel
-db.ref('/Settings').on('value', snap => {
-  settings = snap.val() || {};
-  renderCards();
-  renderSettings();
-}, err => console.error('Settings error', err));
+// Start DB listeners only after auth is confirmed
+firebase.auth().onAuthStateChanged(user => {
+  if (!user) return;
 
-// Real-time listener: today's events → cards + status + log
-db.ref(dateToPath(new Date())).on('value', snap => {
-  todayData = snap.val() || {};
-  renderCards();
-  renderStatus();
-  renderLog(todayData, new Date());
-  checkAlerts(todayData);
+  // Real-time listener: Settings → cards + settings panel
+  db.ref('/Settings').on('value', snap => {
+    settings = snap.val() || {};
+    renderCards();
+    renderSettings();
+  }, err => console.error('Settings error', err));
 
-  // Update live indicator
-  document.getElementById('live-dot').className   = 'live-dot';
-  document.getElementById('live-label').textContent = `LIVE · ${new Date().toLocaleTimeString()}`;
-}, err => {
-  document.getElementById('live-dot').className   = 'live-dot offline';
-  document.getElementById('live-label').textContent = 'OFFLINE';
+  // Real-time listener: today's events → cards + status + log
+  db.ref(dateToPath(new Date())).on('value', snap => {
+    todayData = snap.val() || {};
+    renderCards();
+    renderStatus();
+    renderLog(todayData, new Date());
+    checkAlerts(todayData);
+
+    // Update live indicator
+    document.getElementById('live-dot').className   = 'live-dot';
+    document.getElementById('live-label').textContent = `LIVE · ${new Date().toLocaleTimeString()}`;
+  }, err => {
+    document.getElementById('live-dot').className   = 'live-dot offline';
+    document.getElementById('live-label').textContent = 'OFFLINE';
+  });
+
+  // Load 7-day history for charts
+  loadHistory();
 });
 
-// Load 7-day history for charts
-loadHistory();
+firebase.auth().signInAnonymously().catch(err => console.error("Auth failed:", err));
 
 </script>
 </body>
