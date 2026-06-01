@@ -28,5 +28,5 @@ jobs:
         with:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
-      - run: npx firebase-tools deploy --only functions --project waterflowcontrol-73ec9
+      - run: npx firebase-tools deploy --only functions --project waterflowcontrolusserver
         working-directory: .
